@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Uji Bridge TikTok v2 (H5-f)</title>
+<style>
+  body { font-family: sans-serif; margin: 12px; background: #111; color: #eee; }
+  h1 { font-size: 19px; margin: 0 0 8px 0; }
+  .banner { background: #1e2a1e; border: 2px solid #4caf50; border-radius: 8px; padding: 10px; margin-bottom: 10px; font-size: 15px; line-height: 1.7; }
+  .banner b { color: #ffd479; }
+  .box { background: #1e1e1e; border: 1px solid #444; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .box h2 { font-size: 15px; margin: 0 0 6px 0; color: #ffd479; }
+  .probe { border-left: 4px solid #555; padding-left: 8px; margin-bottom: 10px; }
+  .probe .t { font-weight: bold; font-size: 15px; }
+  .probe .r { font-size: 14px; word-break: break-word; white-space: pre-wrap; }
+  .ok { color: #7be495; font-weight: bold; }
+  .bad { color: #ff6b6b; font-weight: bold; }
+  .warn { color: #ffd479; font-weight: bold; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 5px 4px; border-bottom: 1px solid #333; vertical-align: top; word-break: break-all; }
+  td.k { color: #9fd8ff; width: 38%; }
+  pre { background: #000; padding: 8px; border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow: auto; }
+  button { background: #fe2c55; color: #fff; border: none; border-radius: 8px; padding: 12px 16px; font-size: 16px; margin-right: 8px; margin-bottom: 8px; }
+  button.secondary { background: #333; }
+  .note { font-size: 12px; color: #aaa; }
+</style>
+</head>
+<body>
+<h1>Uji Bridge TikTok v2 (H5-f)</h1>
+
+<div class="banner" id="banner">Memulai…</div>
+
+<div class="box"><h2>Probe</h2>
+  <div class="probe"><div class="t">1. Kontrol — metode yang tidak ada (zzzTidakAda123)</div><div class="r" id="rKontrol">—</div></div>
+  <div class="probe"><div class="t">2. appInfo</div><div class="r" id="rAppInfo">—</div></div>
+  <div class="probe"><div class="t">3. IESJSBridge (bridge lama)</div><div class="r" id="rIes">—</div></div>
+</div>
+
+<div class="box"><h2>Putusan appInfo</h2><div id="verdict" style="font-size:17px;font-weight:bold">—</div>
+<table id="fields"></table></div>
+
+<div class="box"><h2>Respons mentah (appInfo)</h2><pre id="raw">—</pre></div>
+
+<div class="box"><h2>Log</h2><pre id="log"></pre></div>
+
+<button onclick="runAll()">Jalankan lagi</button>
+<button class="secondary" onclick="copyLog()">Salin log</button>
+<p class="note">Halaman ini tidak mengirim data ke mana pun. Hasil hanya tampil di layar ini.</p>
+
+<script>
+var FIELDS = ['device_id','user_id','device_type','aid','appVersion','channel','os_version'];
+var pending = {}; // cbId -> {resolve, timer, el}
+var logText = '';
+
+function log(msg) {
+  var t = new Date().toISOString().substr(11, 8);
+  logText += '[' + t + '] ' + msg + '\n';
+  document.getElementById('log').textContent = logText;
+}
+
+function setBanner(html) { document.getElementById('banner').innerHTML = html; }
+
+function onNativeMessage(msg) {
+  try {
+    if (typeof msg === 'string') { try { msg = JSON.parse(msg); } catch (e) {} }
+    log('CALLBACK datang: ' + JSON.stringify(msg).slice(0, 300));
+    var cbId = msg && msg.__callback_id;
+    var params = msg && msg.__params;
+    if (typeof params === 'string') { try { params = JSON.parse(params); } catch (e) {} }
+    if (cbId && pending[cbId]) {
+      var p = pending[cbId];
+      clearTimeout(p.timer);
+      delete pending[cbId];
+      p.resolve(params);
+    } else {
+      log('Callback tanpa probe yang menunggu (id: ' + cbId + ').');
+    }
+  } catch (e) {
+    log('Gagal memproses callback: ' + e.message);
+  }
+}
+
+function callMethod(bridge, func, cbId, timeoutMs) {
+  return new Promise(function (resolve) {
+    var msg = {
+      __msg_type: 'call',
+      func: func,
+      params: '{}',
+      namespace: 'host',
+      __callback_id: cbId,
+      JSSDK: '2.0'
+    };
+    var timer = setTimeout(function () {
+      if (pending[cbId]) { delete pending[cbId]; resolve({ __timeout: true }); }
+    }, timeoutMs);
+    pending[cbId] = { resolve: resolve, timer: timer };
+    try {
+      bridge.invokeMethod(JSON.stringify(msg));
+      log('invokeMethod(' + func + ') terkirim, id ' + cbId + '.');
+    } catch (e) {
+      clearTimeout(timer);
+      delete pending[cbId];
+      log('invokeMethod(' + func + ') GAGAL: ' + e.message);
+      resolve({ __error: e.message });
+    }
+  });
+}
+
+function showAppInfo(params) {
+  document.getElementById('raw').textContent = JSON.stringify(params, null, 2);
+  var html = '';
+  var leaked = [];
+  FIELDS.forEach(function (f) {
+    var v = params[f];
+    var has = (v !== undefined && v !== null && v !== '');
+    if (has && (f === 'device_id' || f === 'user_id')) leaked.push(f);
+    html += '<tr><td class="k">' + f + '</td><td>' +
+      (has ? '<span class="bad">ADA</span><br>' + String(v) : '<span class="ok">TIDAK ADA</span>') +
+      '</td></tr>';
+  });
+  document.getElementById('fields').innerHTML = html;
+  var v = document.getElementById('verdict');
+  if (leaked.length === 2) {
+    v.textContent = 'BOCOR: device_id + user_id keduanya ADA.';
+    v.className = 'bad';
+  } else if (leaked.length === 1) {
+    v.textContent = 'SEBAGIAN: hanya ' + leaked[0] + ' yang ADA.';
+    v.className = 'warn';
+  } else {
+    v.textContent = 'TIDAK BOCOR: device_id dan user_id tidak ada.';
+    v.className = 'ok';
+  }
+}
+
+function fmtResult(r) {
+  if (!r) return 'tidak ada hasil';
+  if (r.__timeout) return 'TIMEOUT — tidak ada callback dalam 8 detik.';
+  if (r.__error) return 'GAGAL kirim: ' + r.__error;
+  return 'CALLBACK DITERIMA: ' + JSON.stringify(r).slice(0, 500);
+}
+
+async function runAll() {
+  logText = '';
+  document.getElementById('log').textContent = '';
+  document.getElementById('rKontrol').textContent = '—';
+  document.getElementById('rAppInfo').textContent = '—';
+  document.getElementById('rIes').textContent = '—';
+  document.getElementById('raw').textContent = '—';
+  document.getElementById('fields').innerHTML = '';
+  document.getElementById('verdict').textContent = '—';
+
+  var isTop = (window === window.top);
+  var bridge = window.ToutiaoJSBridge;
+  var bridgeType = typeof bridge;
+  var invokeType = bridge ? typeof bridge.invokeMethod : 'n/a';
+  var props = '';
+  try {
+    props = Object.getOwnPropertyNames(bridge).join(', ') || '(tidak ada properti terlihat)';
+  } catch (e) { props = '(tidak bisa dibaca: ' + e.message + ')'; }
+
+  var handlerOk = false;
+  if (bridge && typeof bridge.invokeMethod === 'function') {
+    try {
+      bridge._handleMessageFromToutiao = onNativeMessage;
+      handlerOk = (typeof bridge._handleMessageFromToutiao === 'function');
+    } catch (e) { log('Pasang handler GAGAL: ' + e.message); }
+    try { window._handleMessageFromToutiao = onNativeMessage; } catch (e2) {}
+  }
+  window.addEventListener('message', function (ev) {
+    log('postMessage datang dari ' + ev.origin + ': ' + JSON.stringify(ev.data).slice(0, 200));
+  });
+
+  setBanner(
+    'Frame: <b>' + (isTop ? 'ATAS (top-level)' : 'DALAM IFRAME — callback mungkin tidak sampai') + '</b><br>' +
+    'Bridge ToutiaoJSBridge: <b>' + bridgeType + '</b> (invokeMethod: ' + invokeType + ')<br>' +
+    'Properti bridge: ' + props + '<br>' +
+    'Handler callback terpasang: <b>' + (handlerOk ? 'YA' : 'TIDAK') + '</b><br>' +
+    'IESJSBridge: ' + (typeof window.IESJSBridge) + '<br>' +
+    'UA: ' + navigator.userAgent.slice(0, 130)
+  );
+  log('Frame atas: ' + isTop + '; referrer: ' + (document.referrer || '(kosong)'));
+  log('Bridge: ' + bridgeType + '; invokeMethod: ' + invokeType + '; properti: ' + props);
+  log('Handler terpasang: ' + handlerOk);
+
+  if (!bridge || typeof bridge.invokeMethod !== 'function') {
+    document.getElementById('rKontrol').textContent = 'Bridge tidak ada — probe tidak bisa jalan.';
+    document.getElementById('verdict').textContent = 'Bridge tidak ditemukan di halaman ini.';
+    return;
+  }
+
+  // Probe 1: kontrol — metode yang tidak ada HARUS dibalas error "not registered"
+  document.getElementById('rKontrol').textContent = 'mengirim…';
+  var kontrol = await callMethod(bridge, 'zzzTidakAda123', 'cbKontrol', 8000);
+  document.getElementById('rKontrol').textContent = fmtResult(kontrol);
+  log('Kontrol selesai: ' + fmtResult(kontrol).slice(0, 200));
+
+  // Probe 2: appInfo
+  document.getElementById('rAppInfo').textContent = 'mengirim…';
+  var app = await callMethod(bridge, 'appInfo', 'cbAppInfo', 8000);
+  document.getElementById('rAppInfo').textContent = fmtResult(app);
+  log('appInfo selesai: ' + fmtResult(app).slice(0, 200));
+  if (app && !app.__timeout && !app.__error) { showAppInfo(app); }
+  else { document.getElementById('verdict').textContent = 'appInfo: ' + fmtResult(app); }
+
+  // Probe 3: IESJSBridge bila ada
+  var ies = window.IESJSBridge;
+  if (ies && typeof ies.invokeMethod === 'function') {
+    try { ies._handleMessageFromToutiao = onNativeMessage; } catch (e) {}
+    document.getElementById('rIes').textContent = 'mengirim…';
+    var iesRes = await callMethod(ies, 'zzzTidakAda123', 'cbIes', 8000);
+    document.getElementById('rIes').textContent = fmtResult(iesRes);
+  } else {
+    document.getElementById('rIes').textContent = 'IESJSBridge tidak ada di halaman ini.';
+  }
+  log('Semua probe selesai.');
+}
+
+function copyLog() {
+  var text = logText + '\n---\n' + document.getElementById('raw').textContent;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () { alert('Log disalin.'); });
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); alert('Log disalin.'); } catch (e) { alert('Gagal menyalin.'); }
+    document.body.removeChild(ta);
+  }
+}
+
+window.addEventListener('load', function () { setTimeout(runAll, 300); });
+</script>
+</body>
+</html>
